@@ -180,11 +180,11 @@ fun App() {
                 val l1: List<Entrada> =
                     if (abaAtual == 0 && p != null) listar(ctx, t, p) else emptyList()
                 val l2: List<Pair<String, Int>> =
-                    if (abaAtual != 0 && col == null) {
+                    if (abaAtual in 1..2 && col == null) {
                         if (abaAtual == 1) indice.etiquetas() else indice.albuns()
                     } else emptyList()
                 val l3: List<String> =
-                    if (abaAtual != 0 && col != null) {
+                    if (abaAtual in 1..2 && col != null) {
                         if (abaAtual == 1) indice.fotosDaEtiqueta(col) else indice.fotosDoAlbum(col)
                     } else emptyList()
                 Triple(l1, l2, l3)
@@ -288,7 +288,7 @@ fun App() {
                 contentColor = OliveEscuro,
                 modifier = Modifier.padding(top = 8.dp)
             ) {
-                listOf("Pastas", "Etiquetas", "Álbuns").forEachIndexed { i, nome ->
+                listOf("Pastas", "Etiquetas", "Álbuns", "Backup").forEachIndexed { i, nome ->
                     Tab(
                         selected = aba == i,
                         onClick = {
@@ -304,7 +304,9 @@ fun App() {
 
             msg?.let { Text(it, color = OliveEscuro, modifier = Modifier.padding(top = 8.dp)) }
 
-            if (t == null) {
+            if (aba == 3) {
+                TelaBackup(t, pilha.firstOrNull(), indice)
+            } else if (t == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("Nenhuma pasta escolhida.", color = OliveEscuro)
                 }

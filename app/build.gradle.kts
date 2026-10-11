@@ -13,7 +13,7 @@ android {
         targetSdk = 34
         // sobe sozinho a cada build do GitHub Actions
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
-        versionName = "0.2"
+        versionName = "0.3"
     }
 
     signingConfigs {
@@ -51,4 +51,5 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("io.coil-kt:coil-compose:2.6.0")
+    implementation("com.github.mwiede:jsch:0.2.20")
 }

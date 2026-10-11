@@ -68,6 +68,11 @@ class Indice(ctx: Context) : SQLiteOpenHelper(ctx, "indice.db", null, 1) {
         db.execSQL("UPDATE OR REPLACE album SET foto = ? WHERE foto = ?", arrayOf(novo, antigo))
     }
 
+    /** Grava tudo no arquivo principal do banco, para poder copiá-lo no backup. */
+    fun checkpoint() {
+        writableDatabase.rawQuery("PRAGMA wal_checkpoint(FULL)", null).use { it.moveToFirst() }
+    }
+
     /** aba 1 = etiqueta, aba 2 = álbum */
     fun remover(aba: Int, nome: String, fotos: List<String>) {
         val tabela = if (aba == 1) "etiqueta" else "album"
