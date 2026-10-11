@@ -68,6 +68,42 @@ class Indice(ctx: Context) : SQLiteOpenHelper(ctx, "indice.db", null, 1) {
         db.execSQL("UPDATE OR REPLACE album SET foto = ? WHERE foto = ?", arrayOf(novo, antigo))
     }
 
+    /** Junta o conteúdo de outro índice (o do servidor) com o atual, sem apagar nada. */
+    fun mesclarDe(arquivo: java.io.File): Int {
+        var n = 0
+        val outro = SQLiteDatabase.openDatabase(arquivo.path, null, SQLiteDatabase.OPEN_READWRITE)
+        try {
+            val db = writableDatabase
+            db.beginTransaction()
+            try {
+                outro.rawQuery("SELECT foto, nome FROM etiqueta", null).use { c ->
+                    while (c.moveToNext()) {
+                        db.execSQL(
+                            "INSERT OR IGNORE INTO etiqueta (foto, nome) VALUES (?, ?)",
+                            arrayOf(c.getString(0), c.getString(1))
+                        )
+                        n++
+                    }
+                }
+                outro.rawQuery("SELECT nome, foto FROM album", null).use { c ->
+                    while (c.moveToNext()) {
+                        db.execSQL(
+                            "INSERT OR IGNORE INTO album (nome, foto) VALUES (?, ?)",
+                            arrayOf(c.getString(0), c.getString(1))
+                        )
+                        n++
+                    }
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        } finally {
+            outro.close()
+        }
+        return n
+    }
+
     /** Grava tudo no arquivo principal do banco, para poder copiá-lo no backup. */
     fun checkpoint() {
         writableDatabase.rawQuery("PRAGMA wal_checkpoint(FULL)", null).use { it.moveToFirst() }

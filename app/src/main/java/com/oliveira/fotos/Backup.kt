@@ -203,6 +203,35 @@ fun fazerBackup(
     return titulo + " " + cont.resumo() + erro
 }
 
+fun restaurarIndice(ctx: Context, cfg: ConfigServidor, indice: Indice): String {
+    val sessao = JSch().getSession(cfg.usuario, cfg.host, cfg.porta)
+    sessao.setPassword(cfg.senha)
+    val props = Properties()
+    props["StrictHostKeyChecking"] = "no"
+    sessao.setConfig(props)
+    sessao.connect(15000)
+    val canal = sessao.openChannel("sftp") as ChannelSftp
+    canal.connect(15000)
+    val temp = java.io.File(ctx.cacheDir, "indice_servidor.db")
+    val remoto = cfg.pasta + "/_indice/indice.db"
+    try {
+        try {
+            canal.stat(remoto)
+        } catch (_: SftpException) {
+            return "Ainda não há índice salvo no servidor. Faça um backup primeiro."
+        }
+        canal.get(remoto, temp.path)
+    } finally {
+        canal.disconnect()
+        sessao.disconnect()
+    }
+    val n = indice.mesclarDe(temp)
+    temp.delete()
+    java.io.File(temp.path + "-wal").delete()
+    java.io.File(temp.path + "-shm").delete()
+    return "Índice restaurado: $n registros lidos do servidor (o que você já tinha foi mantido)."
+}
+
 @Composable
 fun TelaBackup(tree: Uri?, raizId: String?, indice: Indice) {
     val ctx = LocalContext.current
@@ -308,6 +337,32 @@ fun TelaBackup(tree: Uri?, raizId: String?, indice: Indice) {
                 TextButton(onClick = { parar.set(true) }) { Text("Parar") }
             }
         }
+        Spacer(Modifier.height(8.dp))
+        Button(
+            enabled = !rodando,
+            colors = ButtonDefaults.buttonColors(containerColor = Oliva),
+            onClick = {
+                val cfg = configAtual()
+                if (cfg.usuario.isEmpty() || cfg.senha.isEmpty()) {
+                    status = "Preencha usuário e senha."
+                } else {
+                    salvarConfig(ctx, cfg)
+                    rodando = true
+                    status = "Buscando o índice no servidor…"
+                    scope.launch {
+                        val resultado = withContext(Dispatchers.IO) {
+                            try {
+                                restaurarIndice(ctx, cfg, indice)
+                            } catch (ex: Exception) {
+                                "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                            }
+                        }
+                        status = resultado
+                        rodando = false
+                    }
+                }
+            }
+        ) { Text("Restaurar índice do servidor") }
         if (tree == null) {
             Text(
                 "Escolha primeiro a pasta de fotos (botão lá em cima).",
