@@ -76,7 +76,7 @@ fun listar(ctx: Context, tree: Uri, pastaId: String): List<Entrada> {
     )?.use { c ->
         while (c.moveToNext()) {
             val e = Entrada(c.getString(0), c.getString(1) ?: "", c.getString(2) ?: "")
-            if (e.ehPasta && e.nome.startsWith(".")) continue
+            if (e.nome.startsWith(".")) continue
             if (e.ehPasta || e.mime.startsWith("image/")) saida.add(e)
         }
     }

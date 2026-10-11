@@ -128,7 +128,7 @@ private fun percorrer(
                 cont.falhas++
                 cont.ultimoErro = ex.message ?: ex.javaClass.simpleName
             }
-        } else if (e.mime.startsWith("image/")) {
+        } else if (e.mime.startsWith("image/") && !e.nome.startsWith(".")) {
             val destino = "$remoto/${e.nome}"
             try {
                 val igual = try {
