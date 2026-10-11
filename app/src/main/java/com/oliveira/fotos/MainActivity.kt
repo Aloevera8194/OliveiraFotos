@@ -33,6 +33,7 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 
 val OliveEscuro = Color(0xFF3B4224)
 val Oliva = Color(0xFF708238)
@@ -156,6 +157,11 @@ fun App() {
     var colecao by remember { mutableStateOf<String?>(null) }
     var nomesColecao by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
     var idsColecao by remember { mutableStateOf<List<String>>(emptyList()) }
+    var sugestoes by remember { mutableStateOf<Map<String, Set<String>>>(emptyMap()) }
+    var aceitas by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var analisando by remember { mutableStateOf(false) }
+    var progresso by remember { mutableStateOf("") }
+    val pararAnalise = remember { AtomicBoolean(false) }
 
     fun abrirRaiz(uri: Uri) {
         tree = uri
@@ -246,11 +252,20 @@ fun App() {
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize().padding(12.dp)) {
             if (sel.isEmpty()) {
-                Button(
-                    onClick = { escolher.launch(null) },
-                    colors = botao,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text(if (t == null) "Escolher pasta de fotos" else "Trocar pasta") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { escolher.launch(null) },
+                        colors = botao,
+                        modifier = Modifier.weight(1f)
+                    ) { Text(if (t == null) "Escolher pasta" else "Trocar pasta") }
+                    if (t != null && aba != 3 && fotos.isNotEmpty()) {
+                        Button(
+                            onClick = { sel = fotos.map { it.id }.toSet() },
+                            colors = botao,
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Selecionar tudo") }
+                    }
+                }
             } else {
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()),
@@ -263,6 +278,33 @@ fun App() {
                     }
                     Button(onClick = { dialogo = "etiquetar" }, colors = botao) { Text("Etiquetar") }
                     Button(onClick = { dialogo = "album" }, colors = botao) { Text("Álbum") }
+                    Button(
+                        onClick = {
+                            val arvore = t
+                            val escolhidas = fotos.filter { it.id in sel }
+                            if (arvore != null && escolhidas.isNotEmpty()) {
+                                dialogo = "sugerir"
+                                analisando = true
+                                sugestoes = emptyMap()
+                                aceitas = emptySet()
+                                pararAnalise.set(false)
+                                progresso = "0 de ${escolhidas.size}"
+                                scope.launch {
+                                    val r = withContext(Dispatchers.Default) {
+                                        analisar(
+                                            ctx, arvore, escolhidas,
+                                            { pararAnalise.get() },
+                                            { n, total -> progresso = "$n de $total" }
+                                        )
+                                    }
+                                    sugestoes = r
+                                    aceitas = r.values.flatten().toSet()
+                                    analisando = false
+                                }
+                            }
+                        },
+                        colors = botao
+                    ) { Text("Sugerir assunto") }
                     val col = colecao
                     if (aba != 0 && col != null) {
                         Button(
@@ -527,6 +569,66 @@ fun App() {
                 }) { Text("Salvar") }
             },
             dismissButton = { TextButton(onClick = { dialogo = "" }) { Text("Cancelar") } }
+        )
+    }
+
+    if (dialogo == "sugerir") {
+        val contagem = sugestoes.values.flatten()
+            .groupingBy { it }.eachCount().toList().sortedByDescending { it.second }
+        AlertDialog(
+            onDismissRequest = { if (!analisando) dialogo = "" },
+            title = { Text(if (analisando) "Analisando…" else "Sugestões de assunto") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    if (analisando) {
+                        Text(progresso)
+                    } else if (contagem.isEmpty()) {
+                        Text("Nenhuma sugestão para essas fotos.")
+                    } else {
+                        Text("Desmarque o que não quiser aplicar:")
+                        contagem.forEach { (nome, qtd) ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        aceitas = if (nome in aceitas) aceitas - nome else aceitas + nome
+                                    },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = nome in aceitas, onCheckedChange = null)
+                                Text("  $nome ($qtd)")
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                if (analisando) {
+                    TextButton(onClick = { pararAnalise.set(true) }) { Text("Parar") }
+                } else {
+                    TextButton(onClick = {
+                        val porNome = mutableMapOf<String, MutableList<String>>()
+                        for ((id, tags) in sugestoes) {
+                            for (tag in tags) {
+                                if (tag in aceitas) porNome.getOrPut(tag) { mutableListOf() }.add(id)
+                            }
+                        }
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                for ((nome, ids) in porNome) indice.etiquetar(ids, listOf(nome))
+                            }
+                            msg = "Etiquetas aplicadas: ${porNome.keys.joinToString(", ")}"
+                            dialogo = ""
+                            versao++
+                        }
+                    }) { Text("Aplicar") }
+                }
+            },
+            dismissButton = {
+                if (!analisando) {
+                    TextButton(onClick = { dialogo = "" }) { Text("Cancelar") }
+                }
+            }
         )
     }
 

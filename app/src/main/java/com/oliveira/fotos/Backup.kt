@@ -44,7 +44,8 @@ data class ConfigServidor(
     val porta: Int,
     val usuario: String,
     val senha: String,
-    val pasta: String
+    val pasta: String,
+    val subpasta: String = ""
 )
 
 fun lerConfig(ctx: Context): ConfigServidor {
@@ -54,7 +55,8 @@ fun lerConfig(ctx: Context): ConfigServidor {
         p.getInt("porta", 22),
         p.getString("usuario", "") ?: "",
         p.getString("senha", "") ?: "",
-        p.getString("pasta", "imagens") ?: "imagens"
+        p.getString("pasta", "imagens") ?: "imagens",
+        p.getString("subpasta", "") ?: ""
     )
 }
 
@@ -65,6 +67,7 @@ fun salvarConfig(ctx: Context, c: ConfigServidor) {
         .putString("usuario", c.usuario)
         .putString("senha", c.senha)
         .putString("pasta", c.pasta)
+        .putString("subpasta", c.subpasta)
         .apply()
 }
 
@@ -181,7 +184,9 @@ fun fazerBackup(
     val cont = Contagem()
     try {
         garantirPasta(canal, cfg.pasta)
-        percorrer(ctx, tree, raizId, cfg.pasta, canal, cont, aoProgredir, cancelado)
+        val destinoFotos = if (cfg.subpasta.isNotEmpty()) cfg.pasta + "/" + cfg.subpasta else cfg.pasta
+        garantirPasta(canal, destinoFotos)
+        percorrer(ctx, tree, raizId, destinoFotos, canal, cont, aoProgredir, cancelado)
 
         // copia também o índice (etiquetas e álbuns)
         try {
@@ -243,6 +248,7 @@ fun TelaBackup(tree: Uri?, raizId: String?, indice: Indice) {
     var usuario by remember { mutableStateOf(salvo.usuario) }
     var senha by remember { mutableStateOf(salvo.senha) }
     var pasta by remember { mutableStateOf(salvo.pasta) }
+    var subpasta by remember { mutableStateOf(salvo.subpasta) }
     var status by remember { mutableStateOf("") }
     var rodando by remember { mutableStateOf(false) }
     val parar = remember { AtomicBoolean(false) }
@@ -257,7 +263,8 @@ fun TelaBackup(tree: Uri?, raizId: String?, indice: Indice) {
         porta.trim().toIntOrNull() ?: 22,
         usuario.trim(),
         senha,
-        pasta.trim().ifEmpty { "imagens" }
+        pasta.trim().ifEmpty { "imagens" },
+        subpasta.trim().trim('/')
     )
 
     Column(
@@ -293,6 +300,11 @@ fun TelaBackup(tree: Uri?, raizId: String?, indice: Indice) {
         OutlinedTextField(
             value = pasta, onValueChange = { pasta = it },
             label = { Text("Pasta no servidor") },
+            singleLine = true, modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = subpasta, onValueChange = { subpasta = it },
+            label = { Text("Subpasta (opcional, ex.: DCIM)") },
             singleLine = true, modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(8.dp))
