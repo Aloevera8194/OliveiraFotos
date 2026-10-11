@@ -11,9 +11,31 @@ android {
         applicationId = "com.oliveira.fotos"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        // sobe sozinho a cada build do GitHub Actions
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+        versionName = "0.2"
     }
+
+    signingConfigs {
+        create("fixa") {
+            val arquivo = System.getenv("KEYSTORE_FILE")
+            if (arquivo != null) {
+                storeFile = file(arquivo)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            if (System.getenv("KEYSTORE_FILE") != null) {
+                signingConfig = signingConfigs.getByName("fixa")
+            }
+        }
+    }
+
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
     compileOptions {
