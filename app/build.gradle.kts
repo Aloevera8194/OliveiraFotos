@@ -13,7 +13,7 @@ android {
         targetSdk = 34
         // sobe sozinho a cada build do GitHub Actions
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
-        versionName = "0.6"
+        versionName = "0.7"
     }
 
     signingConfigs {

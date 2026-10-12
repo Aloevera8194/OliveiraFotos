@@ -71,6 +71,7 @@ class Indice(ctx: Context) : SQLiteOpenHelper(ctx, "indice.db", null, 2) {
     fun albuns() = contar("SELECT nome, COUNT(*) FROM album GROUP BY nome ORDER BY nome")
     fun fotosDaEtiqueta(nome: String) = ids("SELECT foto FROM etiqueta WHERE nome = ? ORDER BY foto", nome)
     fun fotosDoAlbum(nome: String) = ids("SELECT foto FROM album WHERE nome = ? ORDER BY foto", nome)
+    fun etiquetasDaFoto(foto: String) = ids("SELECT nome FROM etiqueta WHERE foto = ? ORDER BY nome", foto)
     fun pessoas() = contar("SELECT pessoa, COUNT(*) FROM rosto WHERE pessoa IS NOT NULL GROUP BY pessoa ORDER BY pessoa")
 
     /** Quando uma foto é renomeada ou movida pelo app, o índice acompanha o novo id. */

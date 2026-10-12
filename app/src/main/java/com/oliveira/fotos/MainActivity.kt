@@ -38,6 +38,10 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 val OliveEscuro = Color(0xFF3B4224)
 val Oliva = Color(0xFF708238)
@@ -172,6 +176,7 @@ fun App() {
     var grupoAtual by remember { mutableStateOf(0) }
     var nomePessoa by remember { mutableStateOf("") }
     val pararRostos = remember { AtomicBoolean(false) }
+    var visualizar by remember { mutableStateOf<Int?>(null) }
     val telaView = LocalView.current
     DisposableEffect(analisando, rostoFase) {
         telaView.keepScreenOn = analisando || rostoFase == "analisando"
@@ -467,7 +472,7 @@ fun App() {
                             Modifier
                                 .aspectRatio(1f)
                                 .combinedClickable(
-                                    onClick = { if (sel.isNotEmpty()) alternar(foto.id) },
+                                    onClick = { if (sel.isNotEmpty()) alternar(foto.id) else visualizar = fotos.indexOf(foto) },
                                     onLongClick = { alternar(foto.id) }
                                 )
                         ) {
@@ -633,6 +638,85 @@ fun App() {
             },
             dismissButton = { TextButton(onClick = { dialogo = "" }) { Text("Cancelar") } }
         )
+    }
+
+    val posicao = visualizar
+    if (posicao != null && t != null && fotos.isNotEmpty()) {
+        Dialog(
+            onDismissRequest = { visualizar = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
+                val pager = rememberPagerState(
+                    initialPage = posicao.coerceIn(0, fotos.size - 1),
+                    pageCount = { fotos.size }
+                )
+                var zoomando by remember { mutableStateOf(false) }
+                var mostrarInfo by remember { mutableStateOf(true) }
+                val atual = fotos[pager.currentPage.coerceIn(0, fotos.size - 1)]
+                val etiquetasDela = remember(atual.id, versao) { indice.etiquetasDaFoto(atual.id) }
+                Box(Modifier.fillMaxSize()) {
+                    HorizontalPager(
+                        state = pager,
+                        userScrollEnabled = !zoomando,
+                        modifier = Modifier.fillMaxSize()
+                    ) { pagina ->
+                        FotoZoom(
+                            docUri(t, fotos[pagina].id),
+                            { zoomando = it },
+                            { mostrarInfo = !mostrarInfo }
+                        )
+                    }
+                    if (mostrarInfo) {
+                        Row(
+                            Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth()
+                                .background(Color(0xAA000000))
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "${pager.currentPage + 1}/${fotos.size}  ${atual.nome}",
+                                color = Color.White,
+                                maxLines = 1,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { visualizar = null }) { Text("Fechar", color = Color.White) }
+                        }
+                        Column(
+                            Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .background(Color(0xAA000000))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                if (etiquetasDela.isEmpty()) "Sem etiquetas" else etiquetasDela.joinToString("  •  "),
+                                color = Color.White
+                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.padding(top = 8.dp)
+                            ) {
+                                Button(
+                                    colors = botao,
+                                    onClick = {
+                                        visualizar = null
+                                        sel = setOf(atual.id)
+                                        dialogo = "etiquetar"
+                                    }
+                                ) { Text("Etiquetar") }
+                                Button(
+                                    colors = botao,
+                                    onClick = { compartilhar(ctx, docUri(t, atual.id)) }
+                                ) { Text("Compartilhar") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (dialogo == "pessoas") {
