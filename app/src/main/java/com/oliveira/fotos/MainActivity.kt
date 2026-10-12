@@ -34,6 +34,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalView
 
 val OliveEscuro = Color(0xFF3B4224)
 val Oliva = Color(0xFF708238)
@@ -162,6 +166,17 @@ fun App() {
     var analisando by remember { mutableStateOf(false) }
     var progresso by remember { mutableStateOf("") }
     val pararAnalise = remember { AtomicBoolean(false) }
+    var rostoFase by remember { mutableStateOf("") }
+    var rostoProgresso by remember { mutableStateOf("") }
+    var grupos by remember { mutableStateOf<List<List<RostoRow>>>(emptyList()) }
+    var grupoAtual by remember { mutableStateOf(0) }
+    var nomePessoa by remember { mutableStateOf("") }
+    val pararRostos = remember { AtomicBoolean(false) }
+    val telaView = LocalView.current
+    DisposableEffect(analisando, rostoFase) {
+        telaView.keepScreenOn = analisando || rostoFase == "analisando"
+        onDispose { telaView.keepScreenOn = false }
+    }
 
     fun abrirRaiz(uri: Uri) {
         tree = uri
@@ -305,6 +320,54 @@ fun App() {
                         },
                         colors = botao
                     ) { Text("Sugerir assunto") }
+                    Button(
+                        onClick = {
+                            val arvore = t
+                            val escolhidas = fotos.filter { it.id in sel }
+                            if (arvore != null && escolhidas.isNotEmpty()) {
+                                dialogo = "pessoas"
+                                rostoFase = "analisando"
+                                pararRostos.set(false)
+                                rostoProgresso = "Preparando…"
+                                scope.launch {
+                                    val erro = withContext(Dispatchers.Default) {
+                                        try {
+                                            analisarRostos(
+                                                ctx, arvore, escolhidas, indice,
+                                                { pararRostos.get() },
+                                                { n, total, rostos ->
+                                                    rostoProgresso = "$n de $total fotos • $rostos rostos"
+                                                }
+                                            )
+                                            ""
+                                        } catch (ex: Exception) {
+                                            "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                                        }
+                                    }
+                                    if (erro.isNotEmpty()) {
+                                        msg = erro
+                                        dialogo = ""
+                                        rostoFase = ""
+                                    } else {
+                                        val sem = withContext(Dispatchers.IO) { indice.rostosSemPessoa() }
+                                        val encontrados = withContext(Dispatchers.Default) { agrupar(sem) }
+                                        grupos = encontrados
+                                        grupoAtual = 0
+                                        nomePessoa = ""
+                                        if (encontrados.isEmpty()) {
+                                            msg = "Rostos analisados. Nenhum grupo novo para nomear."
+                                            dialogo = ""
+                                            rostoFase = ""
+                                            versao++
+                                        } else {
+                                            rostoFase = "nomear"
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        colors = botao
+                    ) { Text("Reconhecer rostos") }
                     val col = colecao
                     if (aba != 0 && col != null) {
                         Button(
@@ -569,6 +632,106 @@ fun App() {
                 }) { Text("Salvar") }
             },
             dismissButton = { TextButton(onClick = { dialogo = "" }) { Text("Cancelar") } }
+        )
+    }
+
+    if (dialogo == "pessoas") {
+        val grupo = grupos.getOrNull(grupoAtual)
+        val nomesConhecidos = remember(versao, grupoAtual, rostoFase) { indice.pessoas().map { it.first } }
+        AlertDialog(
+            onDismissRequest = {
+                if (rostoFase != "analisando") {
+                    dialogo = ""
+                    rostoFase = ""
+                    versao++
+                }
+            },
+            title = {
+                Text(
+                    if (rostoFase == "analisando") "Reconhecendo rostos…"
+                    else "Quem é? (${grupoAtual + 1} de ${grupos.size})"
+                )
+            },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    if (rostoFase == "analisando") {
+                        Text(rostoProgresso)
+                    } else if (grupo != null) {
+                        Row(
+                            Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            grupo.take(8).forEach { r ->
+                                val bmp = remember(r.foto, r.n) {
+                                    r.mini?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                                }
+                                if (bmp != null) {
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(72.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Text("${grupo.size} rostos parecidos", modifier = Modifier.padding(top = 8.dp))
+                        OutlinedTextField(
+                            value = nomePessoa,
+                            onValueChange = { nomePessoa = it },
+                            label = { Text("Nome da pessoa") },
+                            singleLine = true
+                        )
+                        nomesConhecidos.forEach { nome ->
+                            TextButton(onClick = { nomePessoa = nome }) { Text("👤 $nome") }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                if (rostoFase == "analisando") {
+                    TextButton(onClick = { pararRostos.set(true) }) { Text("Parar") }
+                } else if (grupo != null) {
+                    TextButton(onClick = {
+                        val nome = nomePessoa.trim()
+                        if (nome.isNotEmpty()) {
+                            val chaves = grupo.map { it.foto to it.n }
+                            scope.launch {
+                                withContext(Dispatchers.IO) { indice.nomearRostos(chaves, nome) }
+                                nomePessoa = ""
+                                if (grupoAtual + 1 < grupos.size) {
+                                    grupoAtual += 1
+                                } else {
+                                    dialogo = ""
+                                    rostoFase = ""
+                                    msg = "Pessoas salvas. Veja na aba Etiquetas."
+                                    versao++
+                                }
+                            }
+                        }
+                    }) { Text("Salvar") }
+                }
+            },
+            dismissButton = {
+                if (rostoFase == "nomear") {
+                    Row {
+                        TextButton(onClick = {
+                            nomePessoa = ""
+                            if (grupoAtual + 1 < grupos.size) {
+                                grupoAtual += 1
+                            } else {
+                                dialogo = ""
+                                rostoFase = ""
+                                versao++
+                            }
+                        }) { Text("Pular") }
+                        TextButton(onClick = {
+                            dialogo = ""
+                            rostoFase = ""
+                            versao++
+                        }) { Text("Encerrar") }
+                    }
+                }
+            }
         )
     }
 

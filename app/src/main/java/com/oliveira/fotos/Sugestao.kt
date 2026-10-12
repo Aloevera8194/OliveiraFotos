@@ -58,7 +58,7 @@ private val traducao: Map<String, String> = buildMap {
     grupo("ferramenta", "Tool", "Machine", "Engineering")
 }
 
-private fun rotacao(ctx: Context, uri: Uri): Int {
+fun rotacao(ctx: Context, uri: Uri): Int {
     return try {
         ctx.contentResolver.openInputStream(uri)?.use { entrada ->
             when (ExifInterface(entrada).getAttributeInt(ExifInterface.TAG_ORIENTATION, 1)) {
@@ -74,7 +74,7 @@ private fun rotacao(ctx: Context, uri: Uri): Int {
 }
 
 /** Abre a foto já reduzida, para gastar pouca memória. */
-private fun carregar(ctx: Context, uri: Uri, max: Int = 640): Bitmap? {
+fun carregar(ctx: Context, uri: Uri, max: Int = 640): Bitmap? {
     val cr = ctx.contentResolver
     val medida = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, medida) }

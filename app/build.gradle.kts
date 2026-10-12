@@ -13,7 +13,7 @@ android {
         targetSdk = 34
         // sobe sozinho a cada build do GitHub Actions
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
-        versionName = "0.5"
+        versionName = "0.6"
     }
 
     signingConfigs {
@@ -43,6 +43,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    packaging {
+        jniLibs {
+            pickFirsts += "**/libtensorflowlite_jni.so"
+        }
+    }
 }
 
 dependencies {
@@ -54,4 +59,5 @@ dependencies {
     implementation("com.github.mwiede:jsch:0.2.20")
     implementation("com.google.mlkit:image-labeling:17.0.9")
     implementation("com.google.mlkit:face-detection:16.1.7")
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }

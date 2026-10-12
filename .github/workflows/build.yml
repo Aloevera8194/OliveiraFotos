@@ -26,6 +26,14 @@ jobs:
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/fixa.jks"
           echo "KEYSTORE_FILE=$RUNNER_TEMP/fixa.jks" >> "$GITHUB_ENV"
+      - name: Baixar modelo de reconhecimento facial
+        run: |
+          mkdir -p app/src/main/assets
+          curl -fL --retry 3 -o app/src/main/assets/facenet.tflite \
+            https://raw.githubusercontent.com/shubham0204/FaceRecognition_With_FaceNet_Android/master/app/src/main/assets/facenet.tflite
+          size=$(stat -c%s app/src/main/assets/facenet.tflite)
+          echo "modelo: $size bytes"
+          test "$size" -gt 20000000
       - name: Compilar
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}

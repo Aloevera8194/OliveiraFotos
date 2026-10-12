@@ -6,3 +6,4 @@ local.properties
 *.jks
 *.keystore
 *_b64.txt
+app/src/main/assets/facenet.tflite
