@@ -5,16 +5,22 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 /** Índice local: etiquetas, álbuns e rostos. Não mexe nos arquivos das fotos. */
-class Indice(ctx: Context) : SQLiteOpenHelper(ctx, "indice.db", null, 2) {
+class Indice(ctx: Context) : SQLiteOpenHelper(ctx, "indice.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE etiqueta (foto TEXT NOT NULL, nome TEXT NOT NULL, PRIMARY KEY (foto, nome))")
         db.execSQL("CREATE TABLE album (nome TEXT NOT NULL, foto TEXT NOT NULL, PRIMARY KEY (nome, foto))")
         criarRostos(db)
+        criarLixeira(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, antiga: Int, nova: Int) {
         if (antiga < 2) criarRostos(db)
+        if (antiga < 3) criarLixeira(db)
+    }
+
+    private fun criarLixeira(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS lixeira (foto TEXT PRIMARY KEY NOT NULL, origem TEXT NOT NULL)")
     }
 
     private fun criarRostos(db: SQLiteDatabase) {
@@ -67,10 +73,10 @@ class Indice(ctx: Context) : SQLiteOpenHelper(ctx, "indice.db", null, 2) {
         return saida
     }
 
-    fun etiquetas() = contar("SELECT nome, COUNT(*) FROM etiqueta GROUP BY nome ORDER BY nome")
-    fun albuns() = contar("SELECT nome, COUNT(*) FROM album GROUP BY nome ORDER BY nome")
-    fun fotosDaEtiqueta(nome: String) = ids("SELECT foto FROM etiqueta WHERE nome = ? ORDER BY foto", nome)
-    fun fotosDoAlbum(nome: String) = ids("SELECT foto FROM album WHERE nome = ? ORDER BY foto", nome)
+    fun etiquetas() = contar("SELECT nome, COUNT(*) FROM etiqueta WHERE foto NOT LIKE '%/.lixeira/%' GROUP BY nome ORDER BY nome")
+    fun albuns() = contar("SELECT nome, COUNT(*) FROM album WHERE foto NOT LIKE '%/.lixeira/%' GROUP BY nome ORDER BY nome")
+    fun fotosDaEtiqueta(nome: String) = ids("SELECT foto FROM etiqueta WHERE nome = ? AND foto NOT LIKE '%/.lixeira/%' ORDER BY foto", nome)
+    fun fotosDoAlbum(nome: String) = ids("SELECT foto FROM album WHERE nome = ? AND foto NOT LIKE '%/.lixeira/%' ORDER BY foto", nome)
     fun etiquetasDaFoto(foto: String) = ids("SELECT nome FROM etiqueta WHERE foto = ? ORDER BY nome", foto)
     fun pessoas() = contar("SELECT pessoa, COUNT(*) FROM rosto WHERE pessoa IS NOT NULL GROUP BY pessoa ORDER BY pessoa")
 
@@ -179,6 +185,64 @@ class Indice(ctx: Context) : SQLiteOpenHelper(ctx, "indice.db", null, 2) {
         } finally {
             db.endTransaction()
         }
+    }
+
+    // ---------------- editar etiquetas / álbuns ----------------
+
+    /** aba 1 = etiqueta, aba 2 = álbum. Se o novo nome já existe, os dois se juntam. */
+    fun renomearColecao(aba: Int, antigo: String, novo: String) {
+        val tabela = if (aba == 1) "etiqueta" else "album"
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("UPDATE OR IGNORE $tabela SET nome = ? WHERE nome = ?", arrayOf<Any>(novo, antigo))
+            db.execSQL("DELETE FROM $tabela WHERE nome = ?", arrayOf<Any>(antigo))
+            if (aba == 1) db.execSQL("UPDATE rosto SET pessoa = ? WHERE pessoa = ?", arrayOf<Any>(novo, antigo))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun excluirColecao(aba: Int, nome: String) {
+        val tabela = if (aba == 1) "etiqueta" else "album"
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("DELETE FROM $tabela WHERE nome = ?", arrayOf<Any>(nome))
+            if (aba == 1) db.execSQL("UPDATE rosto SET pessoa = NULL WHERE pessoa = ?", arrayOf<Any>(nome))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun removerEtiquetaDaFoto(foto: String, nome: String) {
+        writableDatabase.execSQL("DELETE FROM etiqueta WHERE foto = ? AND nome = ?", arrayOf<Any>(foto, nome))
+    }
+
+    // ---------------- lixeira ----------------
+
+    fun registrarLixeira(foto: String, origem: String) {
+        writableDatabase.execSQL("INSERT OR REPLACE INTO lixeira (foto, origem) VALUES (?, ?)", arrayOf<Any>(foto, origem))
+    }
+
+    fun origemLixeira(foto: String): String? =
+        readableDatabase.rawQuery("SELECT origem FROM lixeira WHERE foto = ?", arrayOf(foto))
+            .use { if (it.moveToFirst()) it.getString(0) else null }
+
+    fun esquecerLixeira(foto: String) {
+        writableDatabase.execSQL("DELETE FROM lixeira WHERE foto = ?", arrayOf<Any>(foto))
+    }
+
+    fun apagarDoIndice(foto: String) {
+        val db = writableDatabase
+        val a = arrayOf<Any>(foto)
+        db.execSQL("DELETE FROM etiqueta WHERE foto = ?", a)
+        db.execSQL("DELETE FROM album WHERE foto = ?", a)
+        db.execSQL("DELETE FROM rosto WHERE foto = ?", a)
+        db.execSQL("DELETE FROM analisada WHERE foto = ?", a)
+        db.execSQL("DELETE FROM lixeira WHERE foto = ?", a)
     }
 
     // ---------------- restaurar do servidor ----------------

@@ -17,7 +17,9 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -375,6 +377,24 @@ fun TelaBackup(tree: Uri?, raizId: String?, indice: Indice) {
                 }
             }
         ) { Text("Restaurar índice do servidor") }
+        val prefsServidor = ctx.getSharedPreferences("servidor", Context.MODE_PRIVATE)
+        var automatico by remember { mutableStateOf(prefsServidor.getBoolean("backup_auto", false)) }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 12.dp)) {
+            Switch(
+                checked = automatico,
+                onCheckedChange = {
+                    automatico = it
+                    prefsServidor.edit().putBoolean("backup_auto", it).apply()
+                    if (it) salvarConfig(ctx, configAtual())
+                    agendarBackupAutomatico(ctx, it)
+                }
+            )
+            Text("  Backup automático (Wi-Fi, a cada 12 h)", color = OliveEscuro)
+        }
+        val ultimoAuto = prefsServidor.getString("ultimo_auto", null)
+        if (ultimoAuto != null) {
+            Text("Último automático: $ultimoAuto", color = OliveEscuro, modifier = Modifier.padding(top = 4.dp))
+        }
         if (tree == null) {
             Text(
                 "Escolha primeiro a pasta de fotos (botão lá em cima).",

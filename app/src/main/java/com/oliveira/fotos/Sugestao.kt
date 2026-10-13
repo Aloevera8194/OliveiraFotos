@@ -96,7 +96,7 @@ fun analisar(
     aoProgredir: (Int, Int) -> Unit
 ): Map<String, Set<String>> {
     val rotulador = ImageLabeling.getClient(
-        ImageLabelerOptions.Builder().setConfidenceThreshold(0.7f).build()
+        ImageLabelerOptions.Builder().setConfidenceThreshold(0.8f).build()
     )
     val detector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()

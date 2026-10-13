@@ -13,7 +13,7 @@ android {
         targetSdk = 34
         // sobe sozinho a cada build do GitHub Actions
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
-        versionName = "0.7"
+        versionName = "0.8"
     }
 
     signingConfigs {
@@ -60,4 +60,5 @@ dependencies {
     implementation("com.google.mlkit:image-labeling:17.0.9")
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }

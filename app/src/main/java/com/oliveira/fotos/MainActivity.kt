@@ -177,6 +177,9 @@ fun App() {
     var nomePessoa by remember { mutableStateOf("") }
     val pararRostos = remember { AtomicBoolean(false) }
     var visualizar by remember { mutableStateOf<Int?>(null) }
+    var nomeEdicao by remember { mutableStateOf("") }
+    var novoNome by remember { mutableStateOf("") }
+    val naLixeira = pilha.lastOrNull()?.endsWith("/.lixeira") == true || pilha.lastOrNull()?.endsWith(":.lixeira") == true
     val telaView = LocalView.current
     DisposableEffect(analisando, rostoFase) {
         telaView.keepScreenOn = analisando || rostoFase == "analisando"
@@ -204,7 +207,7 @@ fun App() {
         if (t != null) {
             val r = withContext(Dispatchers.IO) {
                 val l1: List<Entrada> =
-                    if (abaAtual == 0 && p != null) listar(ctx, t, p) else emptyList()
+                    if (abaAtual == 0 && p != null) (try { listar(ctx, t, p) } catch (_: Exception) { emptyList() }) else emptyList()
                 val l2: List<Pair<String, Int>> =
                     if (abaAtual in 1..2 && col == null) {
                         if (abaAtual == 1) indice.etiquetas() else indice.albuns()
@@ -298,6 +301,28 @@ fun App() {
                     }
                     Button(onClick = { dialogo = "etiquetar" }, colors = botao) { Text("Etiquetar") }
                     Button(onClick = { dialogo = "album" }, colors = botao) { Text("Álbum") }
+                    if (naLixeira) {
+                        Button(
+                            onClick = {
+                                val arvore = t
+                                val raiz = pilha.firstOrNull()
+                                val escolhidas = fotos.filter { it.id in sel }
+                                if (arvore != null && raiz != null) {
+                                    scope.launch {
+                                        val n = withContext(Dispatchers.IO) {
+                                            restaurarDaLixeira(ctx, arvore, escolhidas, raiz, indice)
+                                        }
+                                        msg = "$n de ${escolhidas.size} restauradas"
+                                        versao++
+                                    }
+                                }
+                            },
+                            colors = botao
+                        ) { Text("Restaurar") }
+                        Button(onClick = { dialogo = "apagarvez" }, colors = botao) { Text("Apagar de vez") }
+                    } else {
+                        Button(onClick = { dialogo = "apagar" }, colors = botao) { Text("Apagar") }
+                    }
                     Button(
                         onClick = {
                             val arvore = t
@@ -392,13 +417,14 @@ fun App() {
                 }
             }
 
-            TabRow(
+            ScrollableTabRow(
+                edgePadding = 0.dp,
                 selectedTabIndex = aba,
                 containerColor = Fundo,
                 contentColor = OliveEscuro,
                 modifier = Modifier.padding(top = 8.dp)
             ) {
-                listOf("Pastas", "Etiquetas", "Álbuns", "Backup").forEachIndexed { i, nome ->
+                listOf("Pastas", "Etiquetas", "Álbuns", "Backup", "Família").forEachIndexed { i, nome ->
                     Tab(
                         selected = aba == i,
                         onClick = {
@@ -416,6 +442,8 @@ fun App() {
 
             if (aba == 3) {
                 TelaBackup(t, pilha.firstOrNull(), indice)
+            } else if (aba == 4) {
+                TelaFamilia()
             } else if (t == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("Nenhuma pasta escolhida.", color = OliveEscuro)
@@ -431,26 +459,48 @@ fun App() {
                 } else {
                     LazyColumn(Modifier.padding(top = 8.dp)) {
                         items(nomesColecao, key = { it.first }) { (nome, qtd) ->
-                            Text(
-                                (if (aba == 1) "🏷 " else "🖼 ") + "$nome  ($qtd)",
-                                color = OliveEscuro,
-                                modifier = Modifier
+                            Row(
+                                Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp)
-                                    .background(OlivaClaro)
-                                    .clickable { colecao = nome }
-                                    .padding(14.dp)
-                            )
+                                    .background(OlivaClaro),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    (if (aba == 1) "🏷 " else "🖼 ") + "$nome  ($qtd)",
+                                    color = OliveEscuro,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { colecao = nome }
+                                        .padding(14.dp)
+                                )
+                                TextButton(onClick = {
+                                    nomeEdicao = nome
+                                    novoNome = nome
+                                    dialogo = "editarcol"
+                                }) { Text("✎ Editar") }
+                            }
                         }
                     }
                 }
             } else {
-                Text(
-                    if (aba == 0) "${fotos.size} fotos  •  segure uma foto para selecionar"
-                    else "${colecao}  •  ${fotos.size} fotos",
-                    color = OliveEscuro,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (naLixeira) "Lixeira  •  ${fotos.size} fotos"
+                        else if (aba == 0) "${fotos.size} fotos  •  segure uma para selecionar"
+                        else "${colecao}  •  ${fotos.size} fotos",
+                        color = OliveEscuro,
+                        modifier = Modifier.weight(1f).padding(vertical = 8.dp)
+                    )
+                    if (aba == 0) {
+                        TextButton(onClick = {
+                            val raiz = pilha.firstOrNull()
+                            if (raiz != null) {
+                                pilha = if (naLixeira) pilha.dropLast(1) else listOf(raiz, idLixeira(raiz))
+                            }
+                        }) { Text(if (naLixeira) "Sair da lixeira" else "🗑 Lixeira") }
+                    }
+                }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -691,10 +741,19 @@ fun App() {
                                 .background(Color(0xAA000000))
                                 .padding(12.dp)
                         ) {
-                            Text(
-                                if (etiquetasDela.isEmpty()) "Sem etiquetas" else etiquetasDela.joinToString("  •  "),
-                                color = Color.White
-                            )
+                            Row(Modifier.horizontalScroll(rememberScrollState())) {
+                                if (etiquetasDela.isEmpty()) {
+                                    Text("Sem etiquetas", color = Color.White, modifier = Modifier.padding(8.dp))
+                                }
+                                etiquetasDela.forEach { nomeTag ->
+                                    TextButton(onClick = {
+                                        scope.launch {
+                                            withContext(Dispatchers.IO) { indice.removerEtiquetaDaFoto(atual.id, nomeTag) }
+                                            versao++
+                                        }
+                                    }) { Text("$nomeTag ✕", color = Color.White) }
+                                }
+                            }
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.padding(top = 8.dp)
@@ -711,12 +770,101 @@ fun App() {
                                     colors = botao,
                                     onClick = { compartilhar(ctx, docUri(t, atual.id)) }
                                 ) { Text("Compartilhar") }
+                                if (!naLixeira) {
+                                    Button(
+                                        colors = botao,
+                                        onClick = {
+                                            visualizar = null
+                                            sel = setOf(atual.id)
+                                            dialogo = "apagar"
+                                        }
+                                    ) { Text("Apagar") }
+                                }
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    if (dialogo == "editarcol") {
+        AlertDialog(
+            onDismissRequest = { dialogo = "" },
+            title = { Text(if (aba == 1) "Editar etiqueta" else "Editar álbum") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = novoNome,
+                        onValueChange = { novoNome = it },
+                        label = { Text("Nome") },
+                        singleLine = true
+                    )
+                    TextButton(onClick = {
+                        val abaAtual = aba
+                        val nome = nomeEdicao
+                        scope.launch {
+                            withContext(Dispatchers.IO) { indice.excluirColecao(abaAtual, nome) }
+                            msg = "Excluída: $nome (as fotos continuam no celular)"
+                            colecao = null
+                            dialogo = ""
+                            versao++
+                        }
+                    }) { Text("Excluir", color = Color(0xFFB3261E)) }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val novo = novoNome.trim()
+                    val abaAtual = aba
+                    val antigo = nomeEdicao
+                    if (novo.isNotEmpty() && novo != antigo) {
+                        scope.launch {
+                            withContext(Dispatchers.IO) { indice.renomearColecao(abaAtual, antigo, novo) }
+                            msg = "Renomeada para $novo"
+                            dialogo = ""
+                            versao++
+                        }
+                    } else {
+                        dialogo = ""
+                    }
+                }) { Text("Salvar") }
+            },
+            dismissButton = { TextButton(onClick = { dialogo = "" }) { Text("Cancelar") } }
+        )
+    }
+
+    if (dialogo == "apagar" || dialogo == "apagarvez") {
+        val escolhidas = fotos.filter { it.id in sel }
+        val definitivo = dialogo == "apagarvez"
+        AlertDialog(
+            onDismissRequest = { dialogo = "" },
+            title = { Text(if (definitivo) "Apagar para sempre?" else "Mover para a lixeira?") },
+            text = {
+                Text(
+                    if (definitivo) "${escolhidas.size} fotos serão apagadas do celular e isso não dá para desfazer. As cópias que já estão no servidor continuam lá."
+                    else "${escolhidas.size} fotos vão para a lixeira do app. Você pode restaurar depois."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val arvore = tree
+                    val raiz = pilha.firstOrNull()
+                    if (arvore != null && raiz != null) {
+                        scope.launch {
+                            val n = withContext(Dispatchers.IO) {
+                                if (definitivo) apagarDeVez(ctx, arvore, escolhidas, indice)
+                                else moverParaLixeira(ctx, arvore, escolhidas, raiz, indice)
+                            }
+                            msg = "$n de ${escolhidas.size} " + (if (definitivo) "apagadas" else "na lixeira")
+                            dialogo = ""
+                            versao++
+                        }
+                    }
+                }) { Text(if (definitivo) "Apagar" else "Mover") }
+            },
+            dismissButton = { TextButton(onClick = { dialogo = "" }) { Text("Cancelar") } }
+        )
     }
 
     if (dialogo == "pessoas") {
