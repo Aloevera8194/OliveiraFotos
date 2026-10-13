@@ -3,6 +3,7 @@ package com.oliveira.fotos
 import android.content.Context
 import android.util.Base64
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -122,6 +123,7 @@ class ClienteFamilia(val base: String, usuario: String, senha: String) {
         ImageRequest.Builder(ctx).data(url).addHeader("Authorization", auth).build()
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TelaFamilia() {
     val ctx = LocalContext.current
