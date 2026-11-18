@@ -6,6 +6,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +26,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedTextField
@@ -51,6 +54,7 @@ import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -59,6 +63,7 @@ import java.net.URLEncoder
 class PastaRemota(val nome: String, val caminho: String, val publico: Boolean)
 class FotoRemota(val nome: String, val caminho: String)
 class ListaRemota(val pastas: List<PastaRemota>, val fotos: List<FotoRemota>)
+class ColecaoRemota(val nome: String, val total: Int, val publico: Boolean)
 
 /** Conversa com o servidor de fotos da família (HTTP na rede de casa). */
 class ClienteFamilia(val base: String, usuario: String, senha: String) {
@@ -96,8 +101,34 @@ class ClienteFamilia(val base: String, usuario: String, senha: String) {
         return ler(c)
     }
 
-    fun lista(caminho: String): ListaRemota {
-        val j = JSONObject(get("/api/lista?c=" + enc(caminho)))
+    fun lista(caminho: String): ListaRemota = lerLista(get("/api/lista?c=" + enc(caminho)))
+
+    fun colecao(tipo: String, nome: String): ListaRemota =
+        lerLista(get("/api/colecao?t=" + tipo + "&n=" + enc(nome)))
+
+    fun colecoes(tipo: String): List<ColecaoRemota> {
+        val a = JSONObject(get("/api/colecoes?t=" + tipo)).getJSONArray("itens")
+        return List(a.length()) {
+            val o = a.getJSONObject(it)
+            ColecaoRemota(o.getString("nome"), o.getInt("total"), o.optBoolean("publico"))
+        }
+    }
+
+    fun marcar(tipo: String, nome: String, caminhos: List<String>, remover: Boolean = false) {
+        post("/api/marcar", JSONObject().put("t", tipo).put("n", nome)
+            .put("c", JSONArray(caminhos)).put("remover", remover).toString())
+    }
+
+    fun liberarColecao(tipo: String, nome: String, publico: Boolean) {
+        post("/api/liberar", JSONObject().put("t", tipo).put("n", nome).put("publico", publico).toString())
+    }
+
+    fun mover(caminhos: List<String>, destino: String) {
+        post("/api/mover", JSONObject().put("c", JSONArray(caminhos)).put("d", destino).toString())
+    }
+
+    private fun lerLista(texto: String): ListaRemota {
+        val j = JSONObject(texto)
         val pastas = j.getJSONArray("pastas")
         val fotos = j.getJSONArray("fotos")
         return ListaRemota(
@@ -140,6 +171,13 @@ fun TelaFamilia() {
     var lista by remember { mutableStateOf<ListaRemota?>(null) }
     var visualizando by remember { mutableStateOf<Int?>(null) }
     var recarregar by remember { mutableStateOf(0) }
+    var secao by remember { mutableStateOf(0) } // 0 pastas, 1 etiquetas, 2 álbuns
+    var aberta by remember { mutableStateOf<String?>(null) }
+    var colecoes by remember { mutableStateOf<List<ColecaoRemota>>(emptyList()) }
+    var marcadas by remember { mutableStateOf(setOf<String>()) }
+    var dialogo by remember { mutableStateOf("") } // "", "etiqueta", "album", "mover"
+    var texto by remember { mutableStateOf("") }
+    val tipoAtual = if (secao == 1) "etiqueta" else "album"
     val botao = ButtonDefaults.buttonColors(containerColor = Oliva)
 
     fun entrar() {
@@ -154,6 +192,9 @@ fun TelaFamilia() {
                     .putString("usuario", usuario.trim()).putString("senha", senha)
                     .apply()
                 pilha = listOf("")
+                secao = 0
+                aberta = null
+                marcadas = emptySet()
                 lista = null
                 cliente = novo
                 status = ""
@@ -167,11 +208,18 @@ fun TelaFamilia() {
         if (usuario.isNotEmpty() && senha.isNotEmpty()) entrar()
     }
 
-    LaunchedEffect(cliente, pilha, recarregar) {
+    LaunchedEffect(cliente, pilha, recarregar, secao, aberta) {
         val c = cliente
+        val ab = aberta
         if (c != null) {
             try {
-                lista = withContext(Dispatchers.IO) { c.lista(pilha.last()) }
+                if (secao == 0) {
+                    lista = withContext(Dispatchers.IO) { c.lista(pilha.last()) }
+                } else if (ab == null) {
+                    colecoes = withContext(Dispatchers.IO) { c.colecoes(tipoAtual) }
+                } else {
+                    lista = withContext(Dispatchers.IO) { c.colecao(tipoAtual, ab) }
+                }
                 status = ""
             } catch (ex: Exception) {
                 status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
@@ -179,7 +227,20 @@ fun TelaFamilia() {
         }
     }
 
-    BackHandler(enabled = cliente != null && pilha.size > 1) { pilha = pilha.dropLast(1) }
+    fun voltar() {
+        if (marcadas.isNotEmpty()) {
+            marcadas = emptySet()
+        } else if (secao == 0) {
+            pilha = pilha.dropLast(1)
+        } else {
+            aberta = null
+            lista = null
+        }
+    }
+
+    BackHandler(
+        enabled = cliente != null && (marcadas.isNotEmpty() || (secao == 0 && pilha.size > 1) || (secao != 0 && aberta != null))
+    ) { voltar() }
 
     val c = cliente
     if (c == null) {
@@ -233,15 +294,89 @@ fun TelaFamilia() {
                     lista = null
                 }) { Text("Sair") }
             }
-            if (pilha.size > 1) {
-                TextButton(onClick = { pilha = pilha.dropLast(1) }) { Text("⬆ Voltar") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                BotaoSecao("📁 Pastas", secao == 0) { secao = 0; aberta = null; marcadas = emptySet(); lista = null }
+                BotaoSecao("🏷 Etiquetas", secao == 1) { secao = 1; aberta = null; marcadas = emptySet(); lista = null }
+                BotaoSecao("🖼 Álbuns", secao == 2) { secao = 2; aberta = null; marcadas = emptySet(); lista = null }
+            }
+            if ((secao == 0 && pilha.size > 1) || (secao != 0 && aberta != null)) {
+                TextButton(onClick = { voltar() }) { Text("⬆ Voltar" + if (secao != 0 && aberta != null) " (${aberta})" else "") }
+            }
+            if (admin && marcadas.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().background(OlivaClaro).horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("${marcadas.size} ✓", color = OliveEscuro, modifier = Modifier.padding(horizontal = 12.dp))
+                    TextButton(onClick = { texto = ""; dialogo = "etiqueta" }) { Text("🏷 Etiqueta") }
+                    TextButton(onClick = { texto = ""; dialogo = "album" }) { Text("🖼 Álbum") }
+                    TextButton(onClick = { texto = ""; dialogo = "mover" }) { Text("📁 Mover") }
+                    if (secao != 0 && aberta != null) {
+                        TextButton(onClick = {
+                            val ab = aberta
+                            val fs = marcadas.toList()
+                            if (ab != null) {
+                                scope.launch {
+                                    try {
+                                        withContext(Dispatchers.IO) { c.marcar(tipoAtual, ab, fs, true) }
+                                        marcadas = emptySet()
+                                        recarregar++
+                                    } catch (ex: Exception) {
+                                        status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                                    }
+                                }
+                            }
+                        }) { Text("➖ Tirar") }
+                    }
+                    TextButton(onClick = { marcadas = emptySet() }) { Text("✕") }
+                }
             }
             if (status.isNotEmpty()) Text(status, color = OliveEscuro)
             val l = lista
-            if (l != null) {
+            if (secao != 0 && aberta == null) {
+                if (colecoes.isEmpty()) {
+                    Text(
+                        if (admin) "Nada aqui ainda. Segure uma foto em Pastas para selecionar e etiquetar."
+                        else "Nada liberado ainda.",
+                        color = OliveEscuro, modifier = Modifier.padding(8.dp)
+                    )
+                }
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(1),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(colecoes, key = { it.nome }) { col ->
+                        Row(
+                            Modifier.fillMaxWidth().background(OlivaClaro),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                (if (secao == 1) "🏷 " else "🖼 ") + "${col.nome} (${col.total})",
+                                color = OliveEscuro,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { lista = null; aberta = col.nome }
+                                    .padding(12.dp)
+                            )
+                            if (admin) {
+                                TextButton(onClick = {
+                                    scope.launch {
+                                        try {
+                                            withContext(Dispatchers.IO) { c.liberarColecao(tipoAtual, col.nome, !col.publico) }
+                                            recarregar++
+                                        } catch (ex: Exception) {
+                                            status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                                        }
+                                    }
+                                }) { Text(if (col.publico) "🌐 Pública" else "🔒 Privada") }
+                            }
+                        }
+                    }
+                }
+            } else if (l != null) {
                 if (l.pastas.isEmpty() && l.fotos.isEmpty()) {
                     Text(
-                        if (pilha.size == 1 && !admin) "Nenhuma pasta pública ainda." else "Pasta vazia.",
+                        if (secao == 0 && pilha.size == 1 && !admin) "Nenhuma pasta pública ainda." else "Vazio.",
                         color = OliveEscuro, modifier = Modifier.padding(8.dp)
                     )
                 }
@@ -278,18 +413,82 @@ fun TelaFamilia() {
                         }
                     }
                     items(l.fotos, key = { it.caminho }) { foto ->
-                        AsyncImage(
-                            model = c.pedido(ctx, c.urlMini(foto.caminho)),
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
+                        Box(
+                            Modifier
                                 .aspectRatio(1f)
-                                .clickable { visualizando = l.fotos.indexOf(foto) }
-                        )
+                                .combinedClickable(
+                                    onClick = {
+                                        if (marcadas.isNotEmpty()) {
+                                            marcadas = if (foto.caminho in marcadas) marcadas - foto.caminho else marcadas + foto.caminho
+                                        } else {
+                                            visualizando = l.fotos.indexOf(foto)
+                                        }
+                                    },
+                                    onLongClick = {
+                                        if (admin) {
+                                            marcadas = if (foto.caminho in marcadas) marcadas - foto.caminho else marcadas + foto.caminho
+                                        }
+                                    }
+                                )
+                        ) {
+                            AsyncImage(
+                                model = c.pedido(ctx, c.urlMini(foto.caminho)),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            if (foto.caminho in marcadas) {
+                                Box(
+                                    Modifier.fillMaxSize().background(Color(0x99556B2F)),
+                                    contentAlignment = Alignment.Center
+                                ) { Text("✓", color = Color.White) }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+
+    if (dialogo.isNotEmpty() && c != null) {
+        val titulo = when (dialogo) {
+            "etiqueta" -> "Etiqueta para ${marcadas.size} foto(s)"
+            "album" -> "Álbum para ${marcadas.size} foto(s)"
+            else -> "Mover ${marcadas.size} foto(s) para a pasta"
+        }
+        AlertDialog(
+            onDismissRequest = { dialogo = "" },
+            title = { Text(titulo) },
+            text = {
+                OutlinedTextField(
+                    value = texto, onValueChange = { texto = it },
+                    label = { Text(if (dialogo == "mover") "Pasta (ex.: 2022 ou Viagens/Praia)" else "Nome") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val nome = texto.trim()
+                    val tp = dialogo
+                    val fs = marcadas.toList()
+                    if (nome.isNotEmpty()) {
+                        dialogo = ""
+                        scope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    if (tp == "mover") c.mover(fs, nome) else c.marcar(tp, nome, fs)
+                                }
+                                marcadas = emptySet()
+                                recarregar++
+                            } catch (ex: Exception) {
+                                status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                            }
+                        }
+                    }
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { dialogo = "" }) { Text("Cancelar") } }
+        )
     }
 
     val pos = visualizando
@@ -338,5 +537,14 @@ fun TelaFamilia() {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun BotaoSecao(texto: String, ativo: Boolean, aoTocar: () -> Unit) {
+    if (ativo) {
+        Button(onClick = aoTocar, colors = ButtonDefaults.buttonColors(containerColor = Oliva)) { Text(texto) }
+    } else {
+        TextButton(onClick = aoTocar) { Text(texto) }
     }
 }
