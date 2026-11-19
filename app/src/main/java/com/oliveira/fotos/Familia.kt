@@ -8,10 +8,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -83,7 +85,14 @@ class ClienteFamilia(val base: String, usuario: String, senha: String) {
         try {
             if (c.responseCode == 401) throw IllegalStateException("usuário ou senha incorretos")
             if (c.responseCode == 403) throw IllegalStateException("sem acesso a essa pasta")
-            if (c.responseCode != 200) throw IllegalStateException("erro ${c.responseCode}")
+            if (c.responseCode != 200) {
+                val msg = try {
+                    JSONObject(c.errorStream.bufferedReader().readText()).optString("erro")
+                } catch (e: Exception) {
+                    ""
+                }
+                throw IllegalStateException(if (msg.isNotEmpty()) msg else "erro ${c.responseCode}")
+            }
             return c.inputStream.bufferedReader().readText()
         } finally {
             c.disconnect()
@@ -125,6 +134,15 @@ class ClienteFamilia(val base: String, usuario: String, senha: String) {
 
     fun mover(caminhos: List<String>, destino: String) {
         post("/api/mover", JSONObject().put("c", JSONArray(caminhos)).put("d", destino).toString())
+    }
+
+    fun pastas(): List<String> {
+        val a = JSONObject(get("/api/pastas")).getJSONArray("pastas")
+        return List(a.length()) { a.getString(it) }
+    }
+
+    fun apagarPasta(caminho: String) {
+        post("/api/apagarpasta", JSONObject().put("c", caminho).toString())
     }
 
     private fun lerLista(texto: String): ListaRemota {
@@ -177,6 +195,8 @@ fun TelaFamilia() {
     var marcadas by remember { mutableStateOf(setOf<String>()) }
     var dialogo by remember { mutableStateOf("") } // "", "etiqueta", "album", "mover"
     var texto by remember { mutableStateOf("") }
+    var pastasTodas by remember { mutableStateOf<List<String>>(emptyList()) }
+    var apagar by remember { mutableStateOf<PastaRemota?>(null) }
     val tipoAtual = if (secao == 1) "etiqueta" else "album"
     val botao = ButtonDefaults.buttonColors(containerColor = Oliva)
 
@@ -310,7 +330,17 @@ fun TelaFamilia() {
                     Text("${marcadas.size} ✓", color = OliveEscuro, modifier = Modifier.padding(horizontal = 12.dp))
                     TextButton(onClick = { texto = ""; dialogo = "etiqueta" }) { Text("🏷 Etiqueta") }
                     TextButton(onClick = { texto = ""; dialogo = "album" }) { Text("🖼 Álbum") }
-                    TextButton(onClick = { texto = ""; dialogo = "mover" }) { Text("📁 Mover") }
+                    TextButton(onClick = {
+                        texto = ""
+                        dialogo = "mover"
+                        scope.launch {
+                            try {
+                                pastasTodas = withContext(Dispatchers.IO) { c.pastas() }
+                            } catch (ex: Exception) {
+                                status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                            }
+                        }
+                    }) { Text("📁 Mover") }
                     if (secao != 0 && aberta != null) {
                         TextButton(onClick = {
                             val ab = aberta
@@ -409,6 +439,7 @@ fun TelaFamilia() {
                                         }
                                     }
                                 }) { Text(if (pasta.publico) "🌐 Pública" else "🔒 Privada") }
+                                TextButton(onClick = { apagar = pasta }) { Text("🗑") }
                             }
                         }
                     }
@@ -460,11 +491,27 @@ fun TelaFamilia() {
             onDismissRequest = { dialogo = "" },
             title = { Text(titulo) },
             text = {
-                OutlinedTextField(
-                    value = texto, onValueChange = { texto = it },
-                    label = { Text(if (dialogo == "mover") "Pasta (ex.: 2022 ou Viagens/Praia)" else "Nome") },
-                    singleLine = true
-                )
+                Column {
+                    OutlinedTextField(
+                        value = texto, onValueChange = { texto = it },
+                        label = { Text(if (dialogo == "mover") "Pasta (toque numa da lista ou digite)" else "Nome") },
+                        singleLine = true
+                    )
+                    if (dialogo == "mover") {
+                        val digitado = texto.trim()
+                        if (digitado.isNotEmpty() && digitado !in pastasTodas) {
+                            Text("⚠ Vai criar a pasta nova \"$digitado\"", color = Color(0xFF8A5A00))
+                        }
+                        Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
+                            pastasTodas
+                                .filter { digitado.isEmpty() || it.contains(digitado, ignoreCase = true) }
+                                .take(60)
+                                .forEach { p ->
+                                    TextButton(onClick = { texto = p }) { Text("📁 $p") }
+                                }
+                        }
+                    }
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -488,6 +535,29 @@ fun TelaFamilia() {
                 }) { Text("OK") }
             },
             dismissButton = { TextButton(onClick = { dialogo = "" }) { Text("Cancelar") } }
+        )
+    }
+
+    val ap = apagar
+    if (ap != null && c != null) {
+        AlertDialog(
+            onDismissRequest = { apagar = null },
+            title = { Text("Apagar a pasta?") },
+            text = { Text("\"${ap.nome}\" só será apagada se estiver vazia. Pastas com fotos são mantidas.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    apagar = null
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { c.apagarPasta(ap.caminho) }
+                            recarregar++
+                        } catch (ex: Exception) {
+                            status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                        }
+                    }
+                }) { Text("Apagar") }
+            },
+            dismissButton = { TextButton(onClick = { apagar = null }) { Text("Cancelar") } }
         )
     }
 
