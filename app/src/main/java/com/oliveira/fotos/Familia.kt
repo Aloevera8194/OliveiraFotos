@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -49,6 +50,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
@@ -66,6 +68,7 @@ class PastaRemota(val nome: String, val caminho: String, val publico: Boolean)
 class FotoRemota(val nome: String, val caminho: String)
 class ListaRemota(val pastas: List<PastaRemota>, val fotos: List<FotoRemota>)
 class ColecaoRemota(val nome: String, val total: Int, val publico: Boolean)
+class SugestaoRemota(val caminho: String, val n: Int, val sim: Double)
 
 /** Conversa com o servidor de fotos da família (HTTP na rede de casa). */
 class ClienteFamilia(val base: String, usuario: String, senha: String) {
@@ -101,8 +104,9 @@ class ClienteFamilia(val base: String, usuario: String, senha: String) {
 
     fun get(api: String): String = ler(abrir(api))
 
-    fun post(api: String, corpo: String): String {
+    fun post(api: String, corpo: String, leitura: Int = 20000): String {
         val c = abrir(api)
+        c.readTimeout = leitura
         c.requestMethod = "POST"
         c.doOutput = true
         c.setRequestProperty("Content-Type", "application/json")
@@ -140,6 +144,24 @@ class ClienteFamilia(val base: String, usuario: String, senha: String) {
         val a = JSONObject(get("/api/pastas")).getJSONArray("pastas")
         return List(a.length()) { a.getString(it) }
     }
+
+    fun exemplo(nome: String, caminhos: List<String>): String =
+        JSONObject(post("/api/exemplo", JSONObject().put("n", nome).put("c", JSONArray(caminhos)).toString(), 300000))
+            .optString("resultado")
+
+    fun sugestoes(nome: String): List<SugestaoRemota> {
+        val a = JSONObject(get("/api/sugestoes?n=" + enc(nome))).getJSONArray("itens")
+        return List(a.length()) {
+            val o = a.getJSONObject(it)
+            SugestaoRemota(o.getString("caminho"), o.getInt("n"), o.optDouble("sim"))
+        }
+    }
+
+    fun responder(nome: String, caminho: String, n: Int, sim: Boolean) {
+        post("/api/responder", JSONObject().put("n", nome).put("c", caminho).put("i", n).put("sim", sim).toString())
+    }
+
+    fun urlRecorte(c: String, n: Int) = base + "/api/recorte?i=" + n + "&c=" + enc(c)
 
     fun apagarPasta(caminho: String) {
         post("/api/apagarpasta", JSONObject().put("c", caminho).toString())
@@ -189,7 +211,9 @@ fun TelaFamilia() {
     var lista by remember { mutableStateOf<ListaRemota?>(null) }
     var visualizando by remember { mutableStateOf<Int?>(null) }
     var recarregar by remember { mutableStateOf(0) }
-    var secao by remember { mutableStateOf(0) } // 0 pastas, 1 etiquetas, 2 álbuns
+    var secao by remember { mutableStateOf(0) } // 0 pastas, 1 etiquetas, 2 álbuns, 3 pessoas
+    var aviso by remember { mutableStateOf("") }
+    var sugs by remember { mutableStateOf<List<SugestaoRemota>?>(null) }
     var aberta by remember { mutableStateOf<String?>(null) }
     var colecoes by remember { mutableStateOf<List<ColecaoRemota>>(emptyList()) }
     var marcadas by remember { mutableStateOf(setOf<String>()) }
@@ -197,7 +221,7 @@ fun TelaFamilia() {
     var texto by remember { mutableStateOf("") }
     var pastasTodas by remember { mutableStateOf<List<String>>(emptyList()) }
     var apagar by remember { mutableStateOf<PastaRemota?>(null) }
-    val tipoAtual = if (secao == 1) "etiqueta" else "album"
+    val tipoAtual = when (secao) { 1 -> "etiqueta"; 2 -> "album"; else -> "pessoa" }
     val botao = ButtonDefaults.buttonColors(containerColor = Oliva)
 
     fun entrar() {
@@ -248,7 +272,9 @@ fun TelaFamilia() {
     }
 
     fun voltar() {
-        if (marcadas.isNotEmpty()) {
+        if (sugs != null) {
+            sugs = null
+        } else if (marcadas.isNotEmpty()) {
             marcadas = emptySet()
         } else if (secao == 0) {
             pilha = pilha.dropLast(1)
@@ -259,7 +285,7 @@ fun TelaFamilia() {
     }
 
     BackHandler(
-        enabled = cliente != null && (marcadas.isNotEmpty() || (secao == 0 && pilha.size > 1) || (secao != 0 && aberta != null))
+        enabled = cliente != null && (sugs != null || marcadas.isNotEmpty() || (secao == 0 && pilha.size > 1) || (secao != 0 && aberta != null))
     ) { voltar() }
 
     val c = cliente
@@ -314,10 +340,14 @@ fun TelaFamilia() {
                     lista = null
                 }) { Text("Sair") }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                BotaoSecao("📁 Pastas", secao == 0) { secao = 0; aberta = null; marcadas = emptySet(); lista = null }
-                BotaoSecao("🏷 Etiquetas", secao == 1) { secao = 1; aberta = null; marcadas = emptySet(); lista = null }
-                BotaoSecao("🖼 Álbuns", secao == 2) { secao = 2; aberta = null; marcadas = emptySet(); lista = null }
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                BotaoSecao("📁 Pastas", secao == 0) { secao = 0; aberta = null; marcadas = emptySet(); sugs = null; aviso = ""; lista = null }
+                BotaoSecao("🏷 Etiquetas", secao == 1) { secao = 1; aberta = null; marcadas = emptySet(); sugs = null; aviso = ""; lista = null }
+                BotaoSecao("🖼 Álbuns", secao == 2) { secao = 2; aberta = null; marcadas = emptySet(); sugs = null; aviso = ""; lista = null }
+                BotaoSecao("👤 Pessoas", secao == 3) { secao = 3; aberta = null; marcadas = emptySet(); sugs = null; aviso = ""; lista = null }
             }
             if ((secao == 0 && pilha.size > 1) || (secao != 0 && aberta != null)) {
                 TextButton(onClick = { voltar() }) { Text("⬆ Voltar" + if (secao != 0 && aberta != null) " (${aberta})" else "") }
@@ -330,6 +360,7 @@ fun TelaFamilia() {
                     Text("${marcadas.size} ✓", color = OliveEscuro, modifier = Modifier.padding(horizontal = 12.dp))
                     TextButton(onClick = { texto = ""; dialogo = "etiqueta" }) { Text("🏷 Etiqueta") }
                     TextButton(onClick = { texto = ""; dialogo = "album" }) { Text("🖼 Álbum") }
+                    TextButton(onClick = { texto = ""; dialogo = "pessoa" }) { Text("👤 Pessoa") }
                     TextButton(onClick = {
                         texto = ""
                         dialogo = "mover"
@@ -362,11 +393,86 @@ fun TelaFamilia() {
                 }
             }
             if (status.isNotEmpty()) Text(status, color = OliveEscuro)
+            if (aviso.isNotEmpty()) Text(aviso, color = OliveEscuro, modifier = Modifier.padding(horizontal = 8.dp))
+            val abPessoa = aberta
+            if (admin && secao == 3 && abPessoa != null) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                    TextButton(onClick = {
+                        scope.launch {
+                            try {
+                                sugs = withContext(Dispatchers.IO) { c.sugestoes(abPessoa) }
+                                if (sugs.isNullOrEmpty()) aviso = "Sem sugestões no momento."
+                            } catch (ex: Exception) {
+                                status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                            }
+                        }
+                    }) { Text("🔍 Sugestões") }
+                    TextButton(onClick = {
+                        aviso = "Procurando nas fotos…"
+                        scope.launch {
+                            try {
+                                aviso = withContext(Dispatchers.IO) { c.exemplo(abPessoa, emptyList()) }
+                                recarregar++
+                            } catch (ex: Exception) {
+                                aviso = ""
+                                status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                            }
+                        }
+                    }) { Text("🔄 Procurar de novo") }
+                }
+            }
+            val sg = sugs
             val l = lista
-            if (secao != 0 && aberta == null) {
+            if (sg != null) {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(1),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(sg, key = { it.caminho + "#" + it.n }) { s ->
+                        Row(
+                            Modifier.fillMaxWidth().background(OlivaClaro).padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AsyncImage(
+                                model = c.pedido(ctx, c.urlRecorte(s.caminho, s.n)),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.size(96.dp)
+                            )
+                            Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                                Text("É ${abPessoa ?: ""}?", color = OliveEscuro)
+                                Text("parecido: ${(s.sim * 100).toInt()}%", color = OliveEscuro, fontSize = 12.sp)
+                            }
+                            TextButton(onClick = {
+                                val nomeP = abPessoa
+                                sugs = sugs?.filter { it !== s }
+                                if (nomeP != null) scope.launch {
+                                    try {
+                                        withContext(Dispatchers.IO) { c.responder(nomeP, s.caminho, s.n, true) }
+                                    } catch (ex: Exception) {
+                                        status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                                    }
+                                }
+                            }) { Text("✅ Sim") }
+                            TextButton(onClick = {
+                                val nomeP = abPessoa
+                                sugs = sugs?.filter { it !== s }
+                                if (nomeP != null) scope.launch {
+                                    try {
+                                        withContext(Dispatchers.IO) { c.responder(nomeP, s.caminho, s.n, false) }
+                                    } catch (ex: Exception) {
+                                        status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                                    }
+                                }
+                            }) { Text("❌ Não") }
+                        }
+                    }
+                }
+            } else if (secao != 0 && aberta == null) {
                 if (colecoes.isEmpty()) {
                     Text(
-                        if (admin) "Nada aqui ainda. Segure uma foto em Pastas para selecionar e etiquetar."
+                        if (admin && secao == 3) "Nenhuma pessoa ainda. Em Pastas, segure fotos em que ela aparece e toque em 👤 Pessoa."
+                        else if (admin) "Nada aqui ainda. Segure uma foto em Pastas para selecionar e etiquetar."
                         else "Nada liberado ainda.",
                         color = OliveEscuro, modifier = Modifier.padding(8.dp)
                     )
@@ -381,7 +487,7 @@ fun TelaFamilia() {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                (if (secao == 1) "🏷 " else "🖼 ") + "${col.nome} (${col.total})",
+                                (when (secao) { 1 -> "🏷 "; 2 -> "🖼 "; else -> "👤 " }) + "${col.nome} (${col.total})",
                                 color = OliveEscuro,
                                 modifier = Modifier
                                     .weight(1f)
@@ -485,6 +591,7 @@ fun TelaFamilia() {
         val titulo = when (dialogo) {
             "etiqueta" -> "Etiqueta para ${marcadas.size} foto(s)"
             "album" -> "Álbum para ${marcadas.size} foto(s)"
+            "pessoa" -> "Nome da pessoa nestas ${marcadas.size} foto(s)"
             else -> "Mover ${marcadas.size} foto(s) para a pasta"
         }
         AlertDialog(
@@ -522,9 +629,17 @@ fun TelaFamilia() {
                         dialogo = ""
                         scope.launch {
                             try {
-                                withContext(Dispatchers.IO) {
-                                    if (tp == "mover") c.mover(fs, nome) else c.marcar(tp, nome, fs)
+                                if (tp == "pessoa") aviso = "Procurando nas fotos…"
+                                val res = withContext(Dispatchers.IO) {
+                                    if (tp == "mover") {
+                                        c.mover(fs, nome); ""
+                                    } else if (tp == "pessoa") {
+                                        c.exemplo(nome, fs)
+                                    } else {
+                                        c.marcar(tp, nome, fs); ""
+                                    }
                                 }
+                                if (tp == "pessoa") aviso = res
                                 marcadas = emptySet()
                                 recarregar++
                             } catch (ex: Exception) {
