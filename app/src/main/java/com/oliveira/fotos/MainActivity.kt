@@ -29,6 +29,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -417,24 +419,33 @@ fun App() {
                 }
             }
 
-            ScrollableTabRow(
-                edgePadding = 0.dp,
-                selectedTabIndex = aba,
-                containerColor = Fundo,
-                contentColor = OliveEscuro,
-                modifier = Modifier.padding(top = 8.dp)
-            ) {
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 listOf("Pastas", "Etiquetas", "Álbuns", "Backup", "Família").forEachIndexed { i, nome ->
-                    Tab(
-                        selected = aba == i,
-                        onClick = {
-                            aba = i
-                            colecao = null
-                            sel = emptySet()
-                            msg = null
-                        },
-                        text = { Text(nome) }
-                    )
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .clickable {
+                                aba = i
+                                colecao = null
+                                sel = emptySet()
+                                msg = null
+                            },
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            nome,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                            color = OliveEscuro,
+                            fontWeight = if (aba == i) FontWeight.Bold else FontWeight.Normal,
+                            modifier = Modifier.padding(vertical = 14.dp)
+                        )
+                        Box(
+                            Modifier.fillMaxWidth().height(3.dp)
+                                .background(if (aba == i) Oliva else Color.Transparent)
+                        )
+                    }
                 }
             }
 
