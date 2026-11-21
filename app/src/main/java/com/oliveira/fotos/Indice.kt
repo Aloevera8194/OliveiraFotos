@@ -235,6 +235,31 @@ class Indice(ctx: Context) : SQLiteOpenHelper(ctx, "indice.db", null, 3) {
         writableDatabase.execSQL("DELETE FROM lixeira WHERE foto = ?", arrayOf<Any>(foto))
     }
 
+    /** Todas as fotos que aparecem em alguma etiqueta ou álbum. */
+    fun fotosEmEtiquetasEAlbuns(): List<String> {
+        val saida = mutableListOf<String>()
+        readableDatabase.rawQuery("SELECT foto FROM etiqueta UNION SELECT foto FROM album", null).use { c ->
+            while (c.moveToNext()) saida.add(c.getString(0))
+        }
+        return saida
+    }
+
+    /** Tira só das etiquetas e dos álbuns. Rostos e demais dados ficam como estão. */
+    fun limparEtiquetasEAlbuns(fotos: List<String>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (f in fotos) {
+                val a = arrayOf<Any>(f)
+                db.execSQL("DELETE FROM etiqueta WHERE foto = ?", a)
+                db.execSQL("DELETE FROM album WHERE foto = ?", a)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun apagarDoIndice(foto: String) {
         val db = writableDatabase
         val a = arrayOf<Any>(foto)

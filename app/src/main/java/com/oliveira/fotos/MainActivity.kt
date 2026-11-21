@@ -73,6 +73,14 @@ data class Entrada(val id: String, val nome: String, val mime: String) {
 
 fun docUri(tree: Uri, id: String): Uri = DocumentsContract.buildDocumentUriUsingTree(tree, id)
 
+fun docExiste(ctx: Context, tree: Uri, id: String): Boolean = try {
+    ctx.contentResolver.query(
+        docUri(tree, id), arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null
+    )?.use { it.moveToFirst() } ?: false
+} catch (_: Exception) {
+    false
+}
+
 fun listar(ctx: Context, tree: Uri, pastaId: String): List<Entrada> {
     val filhos = DocumentsContract.buildChildDocumentsUriUsingTree(tree, pastaId)
     val saida = mutableListOf<Entrada>()
@@ -180,6 +188,7 @@ fun App() {
     val pararRostos = remember { AtomicBoolean(false) }
     var visualizar by remember { mutableStateOf<Int?>(null) }
     var nomeEdicao by remember { mutableStateOf("") }
+    var limpeza by remember { mutableStateOf<List<String>?>(null) }
     var novoNome by remember { mutableStateOf("") }
     val naLixeira = pilha.lastOrNull()?.endsWith("/.lixeira") == true || pilha.lastOrNull()?.endsWith(":.lixeira") == true
     val telaView = LocalView.current
@@ -460,6 +469,23 @@ fun App() {
                     Text("Nenhuma pasta escolhida.", color = OliveEscuro)
                 }
             } else if (aba != 0 && colecao == null) {
+                Column(Modifier.fillMaxSize()) {
+                TextButton(onClick = {
+                    scope.launch {
+                        msg = "Conferindo as fotos…"
+                        val raiz = withContext(Dispatchers.IO) { docExiste(ctx, t, DocumentsContract.getTreeDocumentId(t)) }
+                        if (!raiz) {
+                            msg = "Não consegui acessar a pasta do celular. Nada foi apagado."
+                        } else {
+                            val orfas = withContext(Dispatchers.IO) {
+                                indice.fotosEmEtiquetasEAlbuns().filter { !docExiste(ctx, t, it) }
+                            }
+                            msg = null
+                            limpeza = orfas
+                        }
+                    }
+                }) { Text("🧹 Limpar fotos que não existem mais") }
+                Box(Modifier.weight(1f)) {
                 if (nomesColecao.isEmpty()) {
                     Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
                         Text(
@@ -493,6 +519,8 @@ fun App() {
                             }
                         }
                     }
+                }
+                }
                 }
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -659,6 +687,33 @@ fun App() {
                 }
             },
             confirmButton = { TextButton(onClick = { dialogo = "" }) { Text("Cancelar") } }
+        )
+    }
+
+    val orfasLimpeza = limpeza
+    if (orfasLimpeza != null) {
+        AlertDialog(
+            onDismissRequest = { limpeza = null },
+            title = { Text(if (orfasLimpeza.isEmpty()) "Nada para limpar" else "Limpar ${orfasLimpeza.size} fotos?") },
+            text = {
+                Text(
+                    if (orfasLimpeza.isEmpty()) "Todas as fotos das etiquetas e álbuns ainda existem no celular."
+                    else "Essas fotos não existem mais no celular. Vou tirar só as etiquetas e os álbuns delas. Nenhuma foto é apagada, e os dados de rostos ficam como estão."
+                )
+            },
+            confirmButton = {
+                if (orfasLimpeza.isNotEmpty()) {
+                    TextButton(onClick = {
+                        limpeza = null
+                        scope.launch {
+                            withContext(Dispatchers.IO) { indice.limparEtiquetasEAlbuns(orfasLimpeza) }
+                            msg = "${orfasLimpeza.size} fotos tiradas das etiquetas e álbuns."
+                            versao++
+                        }
+                    }) { Text("Limpar") }
+                }
+            },
+            dismissButton = { TextButton(onClick = { limpeza = null }) { Text(if (orfasLimpeza.isEmpty()) "Fechar" else "Cancelar") } }
         )
     }
 
