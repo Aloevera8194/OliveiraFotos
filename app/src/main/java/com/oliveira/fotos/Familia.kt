@@ -33,6 +33,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -65,10 +66,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-class PastaRemota(val nome: String, val caminho: String, val publico: Boolean)
+class PastaRemota(val nome: String, val caminho: String, val publico: Boolean, val compart: Int = 0)
 class FotoRemota(val nome: String, val caminho: String)
 class ListaRemota(val pastas: List<PastaRemota>, val fotos: List<FotoRemota>)
-class ColecaoRemota(val nome: String, val total: Int, val publico: Boolean)
+class ColecaoRemota(val nome: String, val total: Int, val publico: Boolean, val compart: Int = 0)
+class AcessoRemoto(val todos: List<String>, val usuarios: List<String>)
 class SugestaoRemota(val caminho: String, val n: Int, val sim: Double)
 
 /** Conversa com o servidor de fotos da família (HTTP na rede de casa). */
@@ -124,7 +126,7 @@ class ClienteFamilia(val base: String, usuario: String, senha: String) {
         val a = JSONObject(get("/api/colecoes?t=" + tipo)).getJSONArray("itens")
         return List(a.length()) {
             val o = a.getJSONObject(it)
-            ColecaoRemota(o.getString("nome"), o.getInt("total"), o.optBoolean("publico"))
+            ColecaoRemota(o.getString("nome"), o.getInt("total"), o.optBoolean("publico"), o.optInt("compart"))
         }
     }
 
@@ -183,13 +185,24 @@ class ClienteFamilia(val base: String, usuario: String, senha: String) {
         return ListaRemota(
             List(pastas.length()) {
                 val o = pastas.getJSONObject(it)
-                PastaRemota(o.getString("nome"), o.getString("caminho"), o.optBoolean("publico"))
+                PastaRemota(o.getString("nome"), o.getString("caminho"), o.optBoolean("publico"), o.optInt("compart"))
             },
             List(fotos.length()) {
                 val o = fotos.getJSONObject(it)
                 FotoRemota(o.getString("nome"), o.getString("caminho"))
             }
         )
+    }
+
+    fun acesso(tipo: String, chave: String): AcessoRemoto {
+        val j = JSONObject(get("/api/compartilhamento?t=" + tipo + "&n=" + enc(chave)))
+        val a = j.getJSONArray("todos")
+        val b = j.getJSONArray("usuarios")
+        return AcessoRemoto(List(a.length()) { a.getString(it) }, List(b.length()) { b.getString(it) })
+    }
+
+    fun compartilhar(tipo: String, chave: String, usuarios: List<String>) {
+        post("/api/compartilhar", JSONObject().put("t", tipo).put("n", chave).put("usuarios", JSONArray(usuarios)).toString())
     }
 
     fun definirPublico(caminho: String, publico: Boolean) {
@@ -225,6 +238,11 @@ fun TelaFamilia() {
     var nomesTodos by remember { mutableStateOf<List<String>>(emptyList()) }
     var alvoCol by remember { mutableStateOf<ColecaoRemota?>(null) }
     var apagarCol by remember { mutableStateOf<ColecaoRemota?>(null) }
+    var partDialogo by remember { mutableStateOf<Triple<String, String, String>?>(null) } // tipo, chave, título
+    var partPublico by remember { mutableStateOf(false) }
+    var partPublicoAntes by remember { mutableStateOf(false) }
+    var partTodos by remember { mutableStateOf<List<String>>(emptyList()) }
+    var partSel by remember { mutableStateOf(setOf<String>()) }
     var sugs by remember { mutableStateOf<List<SugestaoRemota>?>(null) }
     var aberta by remember { mutableStateOf<String?>(null) }
     var colecoes by remember { mutableStateOf<List<ColecaoRemota>>(emptyList()) }
@@ -360,6 +378,22 @@ fun TelaFamilia() {
             }
             if ((secao == 0 && pilha.size > 1) || (secao != 0 && aberta != null)) {
                 TextButton(onClick = { voltar() }) { Text("⬆ Voltar" + if (secao != 0 && aberta != null) " (${aberta})" else "") }
+            }
+            fun abrirPartilha(tipo: String, chave: String, titulo: String, publico: Boolean) {
+                partTodos = emptyList()
+                partSel = emptySet()
+                partPublico = publico
+                partPublicoAntes = publico
+                partDialogo = Triple(tipo, chave, titulo)
+                scope.launch {
+                    try {
+                        val a = withContext(Dispatchers.IO) { c.acesso(tipo, chave) }
+                        partTodos = a.todos
+                        partSel = a.usuarios.toSet()
+                    } catch (ex: Exception) {
+                        status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                    }
+                }
             }
             fun abrirNome(tp: String) {
                 texto = ""
@@ -516,16 +550,9 @@ fun TelaFamilia() {
                                     .padding(12.dp)
                             )
                             if (admin) {
-                                TextButton(onClick = {
-                                    scope.launch {
-                                        try {
-                                            withContext(Dispatchers.IO) { c.liberarColecao(tipoAtual, col.nome, !col.publico) }
-                                            recarregar++
-                                        } catch (ex: Exception) {
-                                            status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
-                                        }
-                                    }
-                                }) { Text(if (col.publico) "🌐" else "🔒") }
+                                TextButton(onClick = { abrirPartilha(tipoAtual, col.nome, col.nome, col.publico) }) {
+                                    Text(if (col.publico) "🌐" else if (col.compart > 0) "👥" else "🔒")
+                                }
                                 TextButton(onClick = {
                                     texto = col.nome
                                     nomesTodos = colecoes.map { it.nome }
@@ -563,16 +590,9 @@ fun TelaFamilia() {
                                     .padding(12.dp)
                             )
                             if (admin) {
-                                TextButton(onClick = {
-                                    scope.launch {
-                                        try {
-                                            withContext(Dispatchers.IO) { c.definirPublico(pasta.caminho, !pasta.publico) }
-                                            recarregar++
-                                        } catch (ex: Exception) {
-                                            status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
-                                        }
-                                    }
-                                }) { Text(if (pasta.publico) "🌐 Pública" else "🔒 Privada") }
+                                TextButton(onClick = { abrirPartilha("pasta", pasta.caminho, pasta.nome, pasta.publico) }) {
+                                    Text(if (pasta.publico) "🌐" else if (pasta.compart > 0) "👥" else "🔒")
+                                }
                                 TextButton(onClick = { apagar = pasta }) { Text("🗑") }
                             }
                         }
@@ -712,6 +732,65 @@ fun TelaFamilia() {
                 }) { Text("Apagar") }
             },
             dismissButton = { TextButton(onClick = { apagar = null }) { Text("Cancelar") } }
+        )
+    }
+
+    val pd = partDialogo
+    if (pd != null && c != null) {
+        AlertDialog(
+            onDismissRequest = { partDialogo = null },
+            title = { Text("Quem pode ver \"${pd.third}\"?") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { partPublico = !partPublico },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = partPublico, onCheckedChange = { partPublico = it })
+                        Text("🌐 Todos os usuários")
+                    }
+                    if (partTodos.isEmpty()) Text("Nenhum outro usuário cadastrado.", color = OliveEscuro)
+                    partTodos.forEach { u ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable(enabled = !partPublico) {
+                                partSel = if (u in partSel) partSel - u else partSel + u
+                            },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = partPublico || u in partSel,
+                                enabled = !partPublico,
+                                onCheckedChange = { partSel = if (it) partSel + u else partSel - u }
+                            )
+                            Text(u)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val tipo = pd.first
+                    val chave = pd.second
+                    val sel = partSel.toList()
+                    val pub = partPublico
+                    val antes = partPublicoAntes
+                    partDialogo = null
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                if (pub != antes) {
+                                    if (tipo == "pasta") c.definirPublico(chave, pub) else c.liberarColecao(tipo, chave, pub)
+                                }
+                                c.compartilhar(tipo, chave, sel)
+                            }
+                            recarregar++
+                        } catch (ex: Exception) {
+                            status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                        }
+                    }
+                }) { Text("Salvar") }
+            },
+            dismissButton = { TextButton(onClick = { partDialogo = null }) { Text("Cancelar") } }
         )
     }
 
