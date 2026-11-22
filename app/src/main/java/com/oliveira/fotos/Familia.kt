@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Spacer
@@ -163,6 +164,14 @@ class ClienteFamilia(val base: String, usuario: String, senha: String) {
 
     fun urlRecorte(c: String, n: Int) = base + "/api/recorte?i=" + n + "&c=" + enc(c)
 
+    fun renomear(tipo: String, nome: String, novo: String) {
+        post("/api/renomear", JSONObject().put("t", tipo).put("n", nome).put("novo", novo).toString())
+    }
+
+    fun apagarColecao(tipo: String, nome: String) {
+        post("/api/apagarcolecao", JSONObject().put("t", tipo).put("n", nome).toString())
+    }
+
     fun apagarPasta(caminho: String) {
         post("/api/apagarpasta", JSONObject().put("c", caminho).toString())
     }
@@ -213,6 +222,9 @@ fun TelaFamilia() {
     var recarregar by remember { mutableStateOf(0) }
     var secao by remember { mutableStateOf(0) } // 0 pastas, 1 etiquetas, 2 álbuns, 3 pessoas
     var aviso by remember { mutableStateOf("") }
+    var nomesTodos by remember { mutableStateOf<List<String>>(emptyList()) }
+    var alvoCol by remember { mutableStateOf<ColecaoRemota?>(null) }
+    var apagarCol by remember { mutableStateOf<ColecaoRemota?>(null) }
     var sugs by remember { mutableStateOf<List<SugestaoRemota>?>(null) }
     var aberta by remember { mutableStateOf<String?>(null) }
     var colecoes by remember { mutableStateOf<List<ColecaoRemota>>(emptyList()) }
@@ -340,17 +352,26 @@ fun TelaFamilia() {
                     lista = null
                 }) { Text("Sair") }
             }
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                BotaoSecao("📁 Pastas", secao == 0) { secao = 0; aberta = null; marcadas = emptySet(); sugs = null; aviso = ""; lista = null }
-                BotaoSecao("🏷 Etiquetas", secao == 1) { secao = 1; aberta = null; marcadas = emptySet(); sugs = null; aviso = ""; lista = null }
-                BotaoSecao("🖼 Álbuns", secao == 2) { secao = 2; aberta = null; marcadas = emptySet(); sugs = null; aviso = ""; lista = null }
-                BotaoSecao("👤 Pessoas", secao == 3) { secao = 3; aberta = null; marcadas = emptySet(); sugs = null; aviso = ""; lista = null }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                BotaoSecao("📁", secao == 0, Modifier.weight(1f)) { secao = 0; aberta = null; marcadas = emptySet(); sugs = null; aviso = ""; lista = null }
+                BotaoSecao("🏷", secao == 1, Modifier.weight(1f)) { secao = 1; aberta = null; marcadas = emptySet(); sugs = null; aviso = ""; lista = null }
+                BotaoSecao("🖼", secao == 2, Modifier.weight(1f)) { secao = 2; aberta = null; marcadas = emptySet(); sugs = null; aviso = ""; lista = null }
+                BotaoSecao("👤", secao == 3, Modifier.weight(1f)) { secao = 3; aberta = null; marcadas = emptySet(); sugs = null; aviso = ""; lista = null }
             }
             if ((secao == 0 && pilha.size > 1) || (secao != 0 && aberta != null)) {
                 TextButton(onClick = { voltar() }) { Text("⬆ Voltar" + if (secao != 0 && aberta != null) " (${aberta})" else "") }
+            }
+            fun abrirNome(tp: String) {
+                texto = ""
+                dialogo = tp
+                nomesTodos = emptyList()
+                scope.launch {
+                    try {
+                        nomesTodos = withContext(Dispatchers.IO) { c.colecoes(tp).map { it.nome } }
+                    } catch (ex: Exception) {
+                        status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                    }
+                }
             }
             if (admin && marcadas.isNotEmpty()) {
                 Row(
@@ -358,9 +379,9 @@ fun TelaFamilia() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("${marcadas.size} ✓", color = OliveEscuro, modifier = Modifier.padding(horizontal = 12.dp))
-                    TextButton(onClick = { texto = ""; dialogo = "etiqueta" }) { Text("🏷 Etiqueta") }
-                    TextButton(onClick = { texto = ""; dialogo = "album" }) { Text("🖼 Álbum") }
-                    TextButton(onClick = { texto = ""; dialogo = "pessoa" }) { Text("👤 Pessoa") }
+                    TextButton(onClick = { abrirNome("etiqueta") }) { Text("🏷 Etiqueta") }
+                    TextButton(onClick = { abrirNome("album") }) { Text("🖼 Álbum") }
+                    TextButton(onClick = { abrirNome("pessoa") }) { Text("👤 Pessoa") }
                     TextButton(onClick = {
                         texto = ""
                         dialogo = "mover"
@@ -504,7 +525,14 @@ fun TelaFamilia() {
                                             status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
                                         }
                                     }
-                                }) { Text(if (col.publico) "🌐 Pública" else "🔒 Privada") }
+                                }) { Text(if (col.publico) "🌐" else "🔒") }
+                                TextButton(onClick = {
+                                    texto = col.nome
+                                    nomesTodos = colecoes.map { it.nome }
+                                    alvoCol = col
+                                    dialogo = "renomear"
+                                }) { Text("✏") }
+                                TextButton(onClick = { apagarCol = col }) { Text("🗑") }
                             }
                         }
                     }
@@ -592,6 +620,7 @@ fun TelaFamilia() {
             "etiqueta" -> "Etiqueta para ${marcadas.size} foto(s)"
             "album" -> "Álbum para ${marcadas.size} foto(s)"
             "pessoa" -> "Nome da pessoa nestas ${marcadas.size} foto(s)"
+            "renomear" -> "Novo nome"
             else -> "Mover ${marcadas.size} foto(s) para a pasta"
         }
         AlertDialog(
@@ -604,17 +633,24 @@ fun TelaFamilia() {
                         label = { Text(if (dialogo == "mover") "Pasta (toque numa da lista ou digite)" else "Nome") },
                         singleLine = true
                     )
-                    if (dialogo == "mover") {
+                    run {
+                        val opcoes = if (dialogo == "mover") pastasTodas else nomesTodos
                         val digitado = texto.trim()
-                        if (digitado.isNotEmpty() && digitado !in pastasTodas) {
-                            Text("⚠ Vai criar a pasta nova \"$digitado\"", color = Color(0xFF8A5A00))
+                        if (digitado.isNotEmpty() && digitado !in opcoes) {
+                            if (dialogo == "mover") {
+                                Text("⚠ Vai criar a pasta nova \"$digitado\"", color = Color(0xFF8A5A00))
+                            } else if (dialogo != "renomear") {
+                                Text("⚠ Vai criar \"$digitado\" como novo", color = Color(0xFF8A5A00))
+                            }
+                        } else if (dialogo == "renomear" && digitado.isNotEmpty() && digitado != alvoCol?.nome) {
+                            Text("⚠ Já existe: vai juntar as duas", color = Color(0xFF8A5A00))
                         }
                         Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
-                            pastasTodas
+                            opcoes
                                 .filter { digitado.isEmpty() || it.contains(digitado, ignoreCase = true) }
                                 .take(60)
                                 .forEach { p ->
-                                    TextButton(onClick = { texto = p }) { Text("📁 $p") }
+                                    TextButton(onClick = { texto = p }) { Text((if (dialogo == "mover") "📁 " else "• ") + p) }
                                 }
                         }
                     }
@@ -625,6 +661,7 @@ fun TelaFamilia() {
                     val nome = texto.trim()
                     val tp = dialogo
                     val fs = marcadas.toList()
+                    val antigo = alvoCol?.nome ?: ""
                     if (nome.isNotEmpty()) {
                         dialogo = ""
                         scope.launch {
@@ -633,6 +670,8 @@ fun TelaFamilia() {
                                 val res = withContext(Dispatchers.IO) {
                                     if (tp == "mover") {
                                         c.mover(fs, nome); ""
+                                    } else if (tp == "renomear") {
+                                        c.renomear(tipoAtual, antigo, nome); ""
                                     } else if (tp == "pessoa") {
                                         c.exemplo(nome, fs)
                                     } else {
@@ -673,6 +712,29 @@ fun TelaFamilia() {
                 }) { Text("Apagar") }
             },
             dismissButton = { TextButton(onClick = { apagar = null }) { Text("Cancelar") } }
+        )
+    }
+
+    val ac = apagarCol
+    if (ac != null && c != null) {
+        AlertDialog(
+            onDismissRequest = { apagarCol = null },
+            title = { Text("Apagar \"${ac.nome}\"?") },
+            text = { Text("Só o agrupamento é apagado. As fotos continuam nas pastas.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    apagarCol = null
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { c.apagarColecao(tipoAtual, ac.nome) }
+                            recarregar++
+                        } catch (ex: Exception) {
+                            status = "Erro: " + (ex.message ?: ex.javaClass.simpleName)
+                        }
+                    }
+                }) { Text("Apagar") }
+            },
+            dismissButton = { TextButton(onClick = { apagarCol = null }) { Text("Cancelar") } }
         )
     }
 
@@ -726,10 +788,15 @@ fun TelaFamilia() {
 }
 
 @Composable
-private fun BotaoSecao(texto: String, ativo: Boolean, aoTocar: () -> Unit) {
+private fun BotaoSecao(texto: String, ativo: Boolean, modifier: Modifier = Modifier, aoTocar: () -> Unit) {
     if (ativo) {
-        Button(onClick = aoTocar, colors = ButtonDefaults.buttonColors(containerColor = Oliva)) { Text(texto) }
+        Button(
+            onClick = aoTocar, modifier = modifier, contentPadding = PaddingValues(0.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Oliva)
+        ) { Text(texto, fontSize = 20.sp) }
     } else {
-        TextButton(onClick = aoTocar) { Text(texto) }
+        TextButton(onClick = aoTocar, modifier = modifier, contentPadding = PaddingValues(0.dp)) {
+            Text(texto, fontSize = 20.sp)
+        }
     }
 }
